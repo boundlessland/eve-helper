@@ -1,0 +1,5 @@
+{
+  "baseURL": "https://esi.evetech.net/latest/",
+  "alters": ["dev/", "legacy/", "v1/"],
+  "api": {"IndustrySystems": "industry/systems/"}
+}
