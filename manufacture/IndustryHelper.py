@@ -3,7 +3,8 @@ import sys
 from collections import defaultdict
 from queue import Queue
 
-from manufacture.IndustryEnum import ActivityID
+from manufacture.IndustryEnum import ActivityID, IndustryRigMaterialEfficiency, IndustryStructureMaterialEfficiency, \
+    IndustryRigZoneCoefficient
 
 sys.path.append("../")
 
@@ -32,6 +33,11 @@ class IndustryHelper:
                                              conditions=f"tcID=8 AND text LIKE '%{word}%'", fields=["*"])
         return participants
 
+    def ID2Word(self, typeID: int, language: str):
+        word = Dao.conditionalSelect(self.sqlConfig, database="eve-base", table="TrnTranslations",
+                                     conditions=f"tcID=8 AND languageID='{language}' AND keyID={typeID}", fields=["*"])
+        return word[0]
+
     def processDecompose(self, typeID: int, quantity: int, numberOfProcess: int, materialEfficiency: float,
                          baseMaterialEfficiency: float, rigMaterialEfficiency: float,
                          structureMaterialEfficiency: float, reactionEfficiency: float,
@@ -45,9 +51,12 @@ class IndustryHelper:
         intermediateProducts[finalProduct] = quantity
         while not materialQ.empty():
             product = materialQ.get()
+            if product in calculated:
+                continue
             if materialProductDict[product].issubset(calculated):
                 finalQuantity = intermediateProducts[product]
                 runs = int(math.ceil(finalQuantity / productMaterialDict[product]["unitOutput"]))
+                finalQuantity = runs * productMaterialDict[product]["unitOutput"]
                 manufacturingChain.append({"product": product, "quantity": finalQuantity, "materials": []})
                 if productMaterialDict[product]["activityID"] == ActivityID.Reaction.value:
                     for material in productMaterialDict[product]["materialDetails"]:
@@ -63,13 +72,13 @@ class IndustryHelper:
                     for material in productMaterialDict[product]["materialDetails"]:
                         if product == finalProduct:
                             materialQuantity = self.finalQuantityCalculator(runs, material[3],
-                                                                            [materialEfficiency, rigMaterialEfficiency,
-                                                                             structureMaterialEfficiency],
+                                                                            [rigMaterialEfficiency + structureMaterialEfficiency,
+                                                                            materialEfficiency],
                                                                             numberOfProcess)
                         else:
-                            materialQuantity = self.finalQuantityCalculator(runs,  material[3],
-                                                                            [baseMaterialEfficiency, rigMaterialEfficiency,
-                                                                            structureMaterialEfficiency],
+                            materialQuantity = self.finalQuantityCalculator(runs, material[3],
+                                                                            [rigMaterialEfficiency + structureMaterialEfficiency,
+                                                                            baseMaterialEfficiency],
                                                                             productMaterialDict[product]["maxRuns"])
                         if material[2] in productMaterialDict.keys():
                             intermediateProducts[material[2]] += materialQuantity
@@ -80,7 +89,7 @@ class IndustryHelper:
                 calculated.add(product)
             else:
                 materialQ.put(product)
-        return intermediateProducts, rawMaterials, manufacturingChain
+        return intermediateProducts, rawMaterials, manufacturingChain, materialTree
 
     def getBlueprint(self, typeID: int):
         blueprint = Dao.conditionalSelect(self.sqlConfig, database="eve-base", table="IndustryActivityProducts",
@@ -98,6 +107,12 @@ class IndustryHelper:
         maxRuns = Dao.conditionalSelect(self.sqlConfig, database="eve-base", table="IndustryBlueprints",
                                         conditions=f"typeID={typeID}", fields=["*"])
         return maxRuns[0][1]
+
+    def getSolarSystem(self, systemName: str):
+        participants = Dao.conditionalSelect(self.sqlConfig, database="eve-base", table="mapSolarSystems",
+                                             conditions=f"solarSystemName LIKE '%{systemName}%'",
+                                             fields=["solarSystemID", "solarSystemName", "Security"])
+        return participants
 
     def buildMaterialTree(self, typeID: int, quantity: int):
         blueprint = self.getBlueprint(typeID)
@@ -142,7 +157,7 @@ class IndustryHelper:
         return quantity
 
     def finalQuantityCalculator(self, runs: int, quantity: int, efficiencySeq: list, maxRuns: int):
-        finalQuantity = (runs // maxRuns) * quantity * self.efficiencyDecorator(maxRuns, efficiencySeq) + \
+        finalQuantity = (runs // maxRuns) * self.efficiencyDecorator(maxRuns * quantity, efficiencySeq) + \
                         self.efficiencyDecorator((runs % maxRuns) * quantity, efficiencySeq)
         return finalQuantity
 
@@ -153,15 +168,78 @@ class IndustryHelper:
     #         self.quantity = quantity
     #         self.materials = materials
 
-    def entry(self, word: str, materialEfficiency: int, baseMaterialEfficiency=10, decomposeReaction=True):
-        pass
+    def industryCalculatorEntry(self, productName: str, quantity: int, materialEfficiency: int,
+                                manufacturingStructure: str,
+                                manufacturingRig: str, reactionStructure: str, reactionRig: str, solarSystem: str,
+                                baseMaterialEfficiency=10, numberOfProcess=0, decomposeReaction=True,
+                                decomposeFuelBlocks=False):
+        participants = self.word2ID(productName)
+        typeID, language = -1, ""
+        for participant in participants:
+            if productName == participant[3]:
+                typeID = participant[1]
+                language = participant[2]
+                break
+        else:
+            if len(participants) == 0:
+                print("请检查输入，没有这个物品诶~")
+            elif len(participants) > 1:
+                print("具体想找哪个物品呢？")
+                for participant in participants:
+                    print(participant[3])
+            else:
+                typeID = participants[0][1]
+                language = participants[0][2]
+        if typeID == -1:
+            return
+        blueprint = self.getBlueprint(typeID)
+        if len(blueprint) == 0:
+            print("这个物品无法建造哦~")
+            return
+        participants = self.getSolarSystem(solarSystem)
+        solarSystem = tuple()
+        if len(participants) == 0:
+            print("请检查输入，没有这个星系诶~")
+        elif len(participants) > 1:
+            print("具体想找哪个星系呢？")
+            for participant in participants:
+                print(participant[1])
+        else:
+            solarSystem = participants[0]
+        if len(solarSystem) == 0:
+            return
+        zoneCoefficient = 0
+        if solarSystem[2] > 0.5:
+            zoneCoefficient = IndustryRigZoneCoefficient.Highsec.value
+        elif solarSystem[2] > 0:
+            zoneCoefficient = IndustryRigZoneCoefficient.Lowsec.value
+        elif solarSystem[2] <= 0:
+            zoneCoefficient = IndustryRigZoneCoefficient.Zerosec.value
+        if numberOfProcess == 0:
+            numberOfProcess = self.getMaxRuns(self.getBlueprint(typeID)[0])
+        materialEfficiency = materialEfficiency / 100
+        baseMaterialEfficiency = baseMaterialEfficiency / 100
+        rigMaterialEfficiency = getattr(IndustryRigMaterialEfficiency, manufacturingRig).value * zoneCoefficient
+        structureMaterialEfficiency = getattr(IndustryStructureMaterialEfficiency, manufacturingStructure).value
+        reactionEfficiency = getattr(IndustryRigMaterialEfficiency, reactionRig).value
+        intermediateProducts, rawMaterials, manufacturingChain, materialTree = \
+            self.processDecompose(typeID, quantity, numberOfProcess, materialEfficiency, baseMaterialEfficiency,
+                                  rigMaterialEfficiency, structureMaterialEfficiency, reactionEfficiency)
+        intermediateProducts = [(self.ID2Word(_[0], language)[3], _[1]) for _ in intermediateProducts.items()]
+        rawMaterials = [(self.ID2Word(_[0], language)[3], _[1]) for _ in rawMaterials.items()]
+        return intermediateProducts, rawMaterials, manufacturingChain, materialTree
 
 
-a = IndustryHelper("../config/MySQLConfig.json")
-b, c, d = a.processDecompose(12042, 1, 10, 0.1, 0.1, 0.042, 0.01, 0.024)
-print(b)
-print(c)
-print(d)
+helper = IndustryHelper("../config/MySQLConfig.json")
+intermediate, raw, _, _ = helper.industryCalculatorEntry("银鹰级", 1, 10, "Sotiyo", "T1", "Tatara", "T2",
+                                                         "k8x")
+print(intermediate)
+print(raw)
+# print(a.ID2Word(17328, "zh"))
+# b, c, d, e = a.processDecompose(12042, 1, 10, 0.1, 0.1, 0.042, 0.01, 0.024)
+# print(b)
+# print(c)
+# print(d)
 # print(a.getMaxRuns(17328))
 # print(a.getBlueprint(32782))
 # tree = a.buildMaterialTree(11567, 1)
