@@ -64,7 +64,7 @@ def createDatabase(sqlConfig: dict, database: str):
 
 def randomSelect(sqlConfig: dict, database: str, table: str, limit: int, fields: list):
     result = []
-    connection = getConnection(sqlConfig, database=database)
+    connection = getConnection(sqlConfig, database=database, cursorClass=pymysql.cursors.SSDictCursor)
     try:
         with connection.cursor() as cursor:
             # 随机查询
@@ -130,7 +130,7 @@ def deleteAll(sqlConfig: dict, database: str, table: str):
 
 def conditionalSelect(sqlConfig: dict, database: str, table: str, conditions: str, fields: list):
     result = []
-    connection = getConnection(sqlConfig, database=database)
+    connection = getConnection(sqlConfig, database=database, cursorClass=pymysql.cursors.SSDictCursor)
     try:
         with connection.cursor() as cursor:
             # 随机查询

@@ -26,7 +26,7 @@ class IndustryHelper:
         for k in self.specialGroups.keys():
             items = self.word2ID(k)
             for item in items:
-                self.specialGroups[k].add(item[1])
+                self.specialGroups[k].add(item["keyID"])
 
     def word2ID(self, word: str):
         participants = Dao.conditionalSelect(self.sqlConfig, database="eve-base", table="TrnTranslations",
@@ -58,34 +58,27 @@ class IndustryHelper:
                 runs = int(math.ceil(finalQuantity / productMaterialDict[product]["unitOutput"]))
                 finalQuantity = runs * productMaterialDict[product]["unitOutput"]
                 manufacturingChain.append({"product": product, "quantity": finalQuantity, "materials": []})
-                if productMaterialDict[product]["activityID"] == ActivityID.Reaction.value:
-                    for material in productMaterialDict[product]["materialDetails"]:
-                        materialQuantity = self.finalQuantityCalculator(runs, material[3], [reactionEfficiency],
+                for material in productMaterialDict[product]["materialDetails"]:
+                    materialQuantity = 0
+                    if productMaterialDict[product]["activityID"] == ActivityID.Reaction.value:
+                        materialQuantity = self.finalQuantityCalculator(runs, material["quantity"],
+                                                                        [reactionEfficiency],
                                                                         productMaterialDict[product]["maxRuns"])
-                        if material[2] in intermediateProducts.keys():
-                            intermediateProducts[material[2]] += materialQuantity
-                            materialQ.put(material[2])
-                        else:
-                            rawMaterials[material[2]] += materialQuantity
-                        manufacturingChain[-1]["materials"].append((material[2], materialQuantity))
-                elif productMaterialDict[product]["activityID"] == ActivityID.Manufacturing.value:
-                    for material in productMaterialDict[product]["materialDetails"]:
+                    elif productMaterialDict[product]["activityID"] == ActivityID.Manufacturing.value:
                         if product == finalProduct:
-                            materialQuantity = self.finalQuantityCalculator(runs, material[3],
+                            materialQuantity = self.finalQuantityCalculator(runs, material["quantity"],
                                                                             [rigMaterialEfficiency + structureMaterialEfficiency,
-                                                                            materialEfficiency],
-                                                                            numberOfProcess)
+                                                                            materialEfficiency], numberOfProcess)
                         else:
-                            materialQuantity = self.finalQuantityCalculator(runs, material[3],
+                            materialQuantity = self.finalQuantityCalculator(runs, material["quantity"],
                                                                             [rigMaterialEfficiency + structureMaterialEfficiency,
-                                                                            baseMaterialEfficiency],
-                                                                            productMaterialDict[product]["maxRuns"])
-                        if material[2] in productMaterialDict.keys():
-                            intermediateProducts[material[2]] += materialQuantity
-                            materialQ.put(material[2])
-                        else:
-                            rawMaterials[material[2]] += materialQuantity
-                        manufacturingChain[-1]["materials"].append((material[2], materialQuantity))
+                                                                            baseMaterialEfficiency], productMaterialDict[product]["maxRuns"])
+                    if material["materialTypeID"] in intermediateProducts.keys():
+                        intermediateProducts[material["materialTypeID"]] += materialQuantity
+                        materialQ.put(material["materialTypeID"])
+                    else:
+                        rawMaterials[material["materialTypeID"]] += materialQuantity
+                    manufacturingChain[-1]["materials"].append((material["materialTypeID"], materialQuantity))
                 calculated.add(product)
             else:
                 materialQ.put(product)
@@ -95,7 +88,7 @@ class IndustryHelper:
         blueprint = Dao.conditionalSelect(self.sqlConfig, database="eve-base", table="IndustryActivityProducts",
                                           conditions=f"productTypeID={typeID}", fields=["*"])
         if len(blueprint) == 0:
-            return ()
+            return {}
         return blueprint[0]
 
     def getMaterials(self, typeID: int, activityID: int):
@@ -106,12 +99,12 @@ class IndustryHelper:
     def getMaxRuns(self, typeID: int):
         maxRuns = Dao.conditionalSelect(self.sqlConfig, database="eve-base", table="IndustryBlueprints",
                                         conditions=f"typeID={typeID}", fields=["*"])
-        return maxRuns[0][1]
+        return maxRuns[0]["maxProductionLimit"]
 
     def getSolarSystem(self, systemName: str):
         participants = Dao.conditionalSelect(self.sqlConfig, database="eve-base", table="mapSolarSystems",
                                              conditions=f"solarSystemName LIKE '%{systemName}%'",
-                                             fields=["solarSystemID", "solarSystemName", "Security"])
+                                             fields=["solarSystemID", "solarSystemName", "security"])
         return participants
 
     def buildMaterialTree(self, typeID: int, quantity: int):
@@ -119,13 +112,13 @@ class IndustryHelper:
         if len(blueprint) == 0:
             root = {"typeID": typeID, "quantity": quantity, "materials": [], "details": {}}
             return root
-        materials = self.getMaterials(blueprint[0], blueprint[1])
-        maxRuns = self.getMaxRuns(blueprint[0])
+        materials = self.getMaterials(blueprint["typeID"], blueprint["activityID"])
+        maxRuns = self.getMaxRuns(blueprint["typeID"])
         root = {"typeID": typeID, "quantity": quantity, "materials": [],
-                "details": {"maxRuns": maxRuns, "unitOutput": blueprint[3], "materialDetails": materials,
-                            "activityID": blueprint[1]}}
+                "details": {"maxRuns": maxRuns, "unitOutput": blueprint["quantity"], "materialDetails": materials,
+                            "activityID": blueprint["activityID"]}}
         for material in materials:
-            child = self.buildMaterialTree(material[2], material[3] * int(math.ceil(quantity / blueprint[3])))
+            child = self.buildMaterialTree(material["materialTypeID"], material["quantity"] * int(math.ceil(quantity / blueprint["quantity"])))
             root["materials"].append(child)
         return root
 
@@ -176,9 +169,9 @@ class IndustryHelper:
         participants = self.word2ID(productName)
         typeID, language = -1, ""
         for participant in participants:
-            if productName == participant[3]:
-                typeID = participant[1]
-                language = participant[2]
+            if productName == participant["text"]:
+                typeID = participant["keyID"]
+                language = participant["languageID"]
                 break
         else:
             if len(participants) == 0:
@@ -186,10 +179,10 @@ class IndustryHelper:
             elif len(participants) > 1:
                 print("具体想找哪个物品呢？")
                 for participant in participants:
-                    print(participant[3])
+                    print(participant["text"])
             else:
-                typeID = participants[0][1]
-                language = participants[0][2]
+                typeID = participants[0]["keyID"]
+                language = participants[0]["languageID"]
         if typeID == -1:
             return
         blueprint = self.getBlueprint(typeID)
@@ -197,26 +190,26 @@ class IndustryHelper:
             print("这个物品无法建造哦~")
             return
         participants = self.getSolarSystem(solarSystem)
-        solarSystem = tuple()
+        solarSystem = {}
         if len(participants) == 0:
             print("请检查输入，没有这个星系诶~")
         elif len(participants) > 1:
             print("具体想找哪个星系呢？")
             for participant in participants:
-                print(participant[1])
+                print(participant["solarSystemName"])
         else:
             solarSystem = participants[0]
         if len(solarSystem) == 0:
             return
         zoneCoefficient = 0
-        if solarSystem[2] > 0.5:
+        if solarSystem["security"] > 0.5:
             zoneCoefficient = IndustryRigZoneCoefficient.Highsec.value
-        elif solarSystem[2] > 0:
+        elif solarSystem["security"] > 0:
             zoneCoefficient = IndustryRigZoneCoefficient.Lowsec.value
-        elif solarSystem[2] <= 0:
+        elif solarSystem["security"] <= 0:
             zoneCoefficient = IndustryRigZoneCoefficient.Zerosec.value
         if numberOfProcess == 0:
-            numberOfProcess = self.getMaxRuns(self.getBlueprint(typeID)[0])
+            numberOfProcess = self.getMaxRuns(self.getBlueprint(typeID)["typeID"])
         materialEfficiency = materialEfficiency / 100
         baseMaterialEfficiency = baseMaterialEfficiency / 100
         rigMaterialEfficiency = getattr(IndustryRigMaterialEfficiency, manufacturingRig).value * zoneCoefficient
@@ -225,13 +218,16 @@ class IndustryHelper:
         intermediateProducts, rawMaterials, manufacturingChain, materialTree = \
             self.processDecompose(typeID, quantity, numberOfProcess, materialEfficiency, baseMaterialEfficiency,
                                   rigMaterialEfficiency, structureMaterialEfficiency, reactionEfficiency)
-        intermediateProducts = [(self.ID2Word(_[0], language)[3], _[1]) for _ in intermediateProducts.items()]
-        rawMaterials = [(self.ID2Word(_[0], language)[3], _[1]) for _ in rawMaterials.items()]
+        intermediateProducts = [(self.ID2Word(_[0], language)["text"], _[1]) for _ in intermediateProducts.items()]
+        rawMaterials = [(self.ID2Word(_[0], language)["text"], _[1]) for _ in rawMaterials.items()]
+        manufacturingChain = [{"产物": self.ID2Word(_["product"], language)["text"], "数量": _["quantity"],
+                               "原料": [(self.ID2Word(temp[0], language)["text"], temp[1]) for temp in _["materials"]]}
+                              for _ in reversed(manufacturingChain)]
         return intermediateProducts, rawMaterials, manufacturingChain, materialTree
 
 
 helper = IndustryHelper("../config/MySQLConfig.json")
-intermediate, raw, _, _ = helper.industryCalculatorEntry("银鹰级", 1, 10, "Sotiyo", "T1", "Tatara", "T2",
+intermediate, raw, _, _ = helper.industryCalculatorEntry("勒维亚坦级", 1, 9, "Sotiyo", "T1", "Tatara", "T2",
                                                          "k8x")
 print(intermediate)
 print(raw)
