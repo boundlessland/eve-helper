@@ -89,6 +89,15 @@ class IndustryHelper:
                                           conditions=f"productTypeID={typeID}", fields=["*"])
         if len(blueprint) == 0:
             return {}
+        if len(blueprint) > 1:
+            # 防止出现多种图对应一种产出的情况（历史原因）
+            for bpo in blueprint:
+                productName = self.ID2Word(typeID, "en")["text"]
+                bpoName = self.ID2Word(bpo["typeID"], "en")["text"]
+                if bpoName.startswith(productName):
+                    return bpo
+            else:
+                return {}
         return blueprint[0]
 
     def getMaterials(self, typeID: int, activityID: int):
@@ -227,10 +236,14 @@ class IndustryHelper:
 
 
 helper = IndustryHelper("../config/MySQLConfig.json")
-intermediate, raw, _, _ = helper.industryCalculatorEntry("勒维亚坦级", 1, 9, "Sotiyo", "T1", "Tatara", "T2",
+intermediate, raw, chain, _ = helper.industryCalculatorEntry("神使级", 1, 9, "Sotiyo", "T1", "Tatara", "T2",
                                                          "k8x")
-print(intermediate)
-print(raw)
+for item in intermediate:
+    print(item)
+for item in raw:
+    print(item)
+for item in chain:
+    print(item)
 # print(a.ID2Word(17328, "zh"))
 # b, c, d, e = a.processDecompose(12042, 1, 10, 0.1, 0.1, 0.042, 0.01, 0.024)
 # print(b)
