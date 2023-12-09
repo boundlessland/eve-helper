@@ -9,3 +9,9 @@ def loadConfigFromJSON(filepath: str):
         print('ConfigFile ' + filepath + ' Not Found')
     return config
 
+
+def dumpConfigToJSON(filepath: str, content: dict):
+    with open(filepath, "w") as f:
+        json.dump(content, f)
+    f.close()
+    return
